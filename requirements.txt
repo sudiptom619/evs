@@ -8,3 +8,6 @@ certifi
 scikit-learn
 xgboost
 catboost
+geopy
+streamlit-folium
+folium
