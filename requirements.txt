@@ -1,0 +1,10 @@
+streamlit
+meteostat
+streamlit-autorefresh
+pandas
+numpy
+joblib
+certifi
+scikit-learn
+xgboost
+catboost
