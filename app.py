@@ -191,7 +191,7 @@ if st.sidebar.button("Set Location"):
 
 lat = st.session_state.lat
 lon = st.session_state.lon
-st.subheader("🌦️ Weather Overview")
+
 if lat is not None and lon is not None:
     try:
         location = Point(lat, lon)
