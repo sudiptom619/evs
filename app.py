@@ -1,9 +1,6 @@
-# 🌦️ Realtime Rainfall Predictor (Sudipto's Final Streamlit App)
 
 import ssl, certifi, warnings
 warnings.filterwarnings("ignore")
-
-# ---- Fix SSL errors (cert verification) ----
 
 ssl._create_default_https_context = lambda: ssl.create_default_context(cafile=certifi.where())
 
@@ -18,22 +15,22 @@ from geopy.geocoders import Nominatim
 from geopy.extra.rate_limiter import RateLimiter
 from streamlit_folium import st_folium
 import folium
+import asyncio
+import aiohttp
 
-# ===============================
+
 
 # Page Setup
 
-# ===============================
+
 
 st.set_page_config(page_title="Realtime Rainfall Predictor", page_icon="🌧️", layout="centered")
 st.title("🌦️ Realtime Rainfall Prediction Dashboard")
 st.caption("Fetch live weather data from any location and predict rainfall in real time.")
 
-# ===============================
 
 # Cached Loaders
 
-# ===============================
 
 @st.cache_resource(show_spinner=False)
 def load_artifacts():
@@ -54,22 +51,14 @@ except Exception as e:
     st.error(f"❌ Could not load model/pipeline: {e}")
     st.stop()
 
-# ===============================
 
 # Auto Refresh every 10 minutes
 
-# ===============================
 
 st_autorefresh(interval=10 * 60 * 1000, key="auto_refresh")
 
-# ===============================
 
 # Sidebar: Location Selection
-
-# ===============================
-
-
-
 
 st.sidebar.header("📍 Choose Location Input Mode")
 
@@ -79,8 +68,6 @@ mode = st.sidebar.radio(
 index=0
 )
 
-# Persistent state for coordinates
-
 if "lat" not in st.session_state:
     st.session_state.lat = None
 if "lon" not in st.session_state:
@@ -88,7 +75,6 @@ if "lon" not in st.session_state:
 
 lat = st.session_state.lat
 lon = st.session_state.lon
-
 
 # Mode 1 — Map Click
 
@@ -101,48 +87,53 @@ if mode.startswith("🗺️"):
     folium.LatLngPopup().add_to(m)
     map_data = st_folium(m, width=700, height=500)
 
+new_lat, new_lon = st.session_state.lat, st.session_state.lon
+
 if map_data and map_data.get("last_clicked"):
     clicked = map_data["last_clicked"]
-    new_lat, new_lon = clicked["lat"], clicked["lng"]
+    if clicked:
+        new_lat, new_lon = clicked["lat"], clicked["lng"]
 
-    # Only rerun if new point is different
+if new_lat is not None and new_lon is not None:
     if new_lat != st.session_state.lat or new_lon != st.session_state.lon:
         st.session_state.lat, st.session_state.lon = new_lat, new_lon
         st.rerun()
 
 
 
-# Mode 2 — City Name Geocoding
-
-
+# Mode 2 — City Name Geocoding (FIXED + VISIBLE SEARCH BOX)
 
 elif mode.startswith("🏙️"):
+    st.sidebar.write("Type a city name below to search and select from suggestions.")
+
+
     geocode = get_geolocator()
 
-    # Keep input stable across reruns
     if "city_name" not in st.session_state:
         st.session_state.city_name = ""
     if "suggestions" not in st.session_state:
         st.session_state.suggestions = []
 
-    # Text input for city
-    city_input = st.sidebar.text_input("Enter city name:", st.session_state.city_name)
+    city_input = st.sidebar.text_input(
+        "Enter city name:",
+        value=st.session_state.city_name,
+        key="city_input_box",
+        placeholder="e.g., Kolkata, Delhi, Mumbai..."
+    )
 
-    # Only search when the user types more than 2 characters
     if len(city_input.strip()) > 2 and city_input != st.session_state.city_name:
         try:
             with st.spinner("🔍 Searching for matches..."):
-                from geopy.geocoders import Nominatim
                 nom = Nominatim(user_agent="rainfall_app_suggestions")
                 results = nom.geocode(city_input, exactly_one=False, limit=5, addressdetails=True)
                 if results:
                     st.session_state.suggestions = [res.address for res in results]
                 else:
                     st.session_state.suggestions = []
-        except Exception:
+        except Exception as e:
+            st.sidebar.warning(f"Geocoding error: {e}")
             st.session_state.suggestions = []
 
-    # Display suggestions as radio buttons
     if st.session_state.suggestions:
         st.sidebar.write("Suggestions:")
         selected = st.sidebar.radio(
@@ -158,23 +149,15 @@ elif mode.startswith("🏙️"):
                 st.session_state.lat = float(loc.latitude)
                 st.session_state.lon = float(loc.longitude)
                 st.sidebar.success(f"📍 {selected}: ({loc.latitude:.4f}, {loc.longitude:.4f})")
-
-                # Simple visual confirmation
                 st.success(f"✅ Selected: {selected}")
                 st.map(pd.DataFrame([[loc.latitude, loc.longitude]], columns=["lat", "lon"]))
-
             else:
-                st.sidebar.warning("Could not geocode the selected city.")
-
-    
+                st.sidebar.warning("⚠️ Could not geocode the selected city.")
     else:
-        st.sidebar.info("Type at least 3 letters to get city suggestions.")
-
+        st.sidebar.info("Type at least 3 letters to see suggestions.")
 
 
 # Mode 3 — Manual Coordinates
-
-
 
 if mode.startswith("📐"):
     lat = st.sidebar.number_input("Latitude:", value=22.5726, format="%.6f")
@@ -183,11 +166,9 @@ if st.sidebar.button("Set Location"):
     st.session_state.lat, st.session_state.lon = lat, lon
     st.rerun()
 
-# ===============================
 
 # Fetch Live Weather + Predict
 
-# ===============================
 
 lat = st.session_state.lat
 lon = st.session_state.lon
@@ -199,23 +180,17 @@ if lat is not None and lon is not None:
         start = end - timedelta(hours=6)
         data = Hourly(location, start, end).fetch()
 
+
         if data.empty:
             st.warning("⚠️ No live data available for this location right now.")
         else:
             latest = data.tail(1).reset_index()
-            fetch_time = (
-                latest["time"].iloc[0]
-                if "time" in latest.columns
-                else latest.index[0]
-            )
+            fetch_time = latest["time"].iloc[0] if "time" in latest.columns else latest.index[0]
 
             st.success(f"✅ Live data fetched for ({lat:.4f}, {lon:.4f}) at {fetch_time:%Y-%m-%d %H:%M UTC}")
-            # st.dataframe(latest)
 
-            #Stylish Metric Cards Section
             if not latest.empty:
                 row = latest.iloc[0]
-
                 temp = row.get("temp", np.nan)
                 dewpt = row.get("dwpt", np.nan)
                 rh = row.get("rhum", np.nan)
@@ -263,39 +238,45 @@ if lat is not None and lon is not None:
                 col6.markdown(f"<div class='metric-card'><div class='metric-label'>🌧️ Precipitation</div><div class='metric-value'>{prcp:.2f} mm</div></div>", unsafe_allow_html=True)
             else:
                 st.info("No recent weather data found.")
-            
 
-
-            # AIR QUALITY SECTION
-
-            import requests
+# 🌍 AIR QUALITY SECTION (ASYNC FIXED)
 
             st.subheader("🌍 Air Quality Overview")
 
-            try:
+            async def fetch_air_quality(lat, lon):
                 url = (
                     f"https://air-quality-api.open-meteo.com/v1/air-quality?"
                     f"latitude={lat}&longitude={lon}"
                     "&hourly=pm10,pm2_5,carbon_monoxide,nitrogen_dioxide,sulphur_dioxide,ozone,european_aqi"
                 )
-                r = requests.get(url)
-                aq_data = r.json()
+                timeout = aiohttp.ClientTimeout(total=10)
+                async with aiohttp.ClientSession(timeout=timeout) as session:
+                    async with session.get(url) as response:
+                        if response.status == 200:
+                            return await response.json()
+                        return None
 
-                if "hourly" in aq_data and aq_data["hourly"]:
+            async def get_air_quality_data(lat, lon):
+                aq_data = await fetch_air_quality(lat, lon)
+                if not aq_data or "hourly" not in aq_data or not aq_data["hourly"]:
+                    await asyncio.sleep(2)
+                    aq_data = await fetch_air_quality(lat, lon)
+                return aq_data
+
+            async def main():
+                try:
+                    aq_data = await get_air_quality_data(lat, lon)
+                    if not aq_data or "hourly" not in aq_data:
+                        st.warning("⚠️ Could not fetch air quality data right now.")
+                        return
+
                     air = pd.DataFrame(aq_data["hourly"])
                     latest_air = air.tail(1).reset_index(drop=True)
 
                     pm10 = latest_air["pm10"][0]
                     pm25 = latest_air["pm2_5"][0]
+                    spm = 1.3 * pm10
 
-                    # --- Calculate SPM (Suspended Particulate Matter) ---
-                    # Empirical relation based on PM10 and PM2.5 data
-                    spm = 1.3 * pm10  # μg/m³
-
-                    # Optional refinement:
-                    # spm = pm10 + 0.5 * (pm10 - pm25)   # adds a gentle adjustment using PM2.5 gap
-
-                    # Add SPM to metric cards
                     c8 = st.columns(1)[0]
                     c8.markdown(
                         f"<div class='aq-card'><div class='aq-label'>🌪️ SPM</div><div class='aq-value'>{spm:.1f} µg/m³</div></div>",
@@ -348,89 +329,70 @@ if lat is not None and lon is not None:
                     c6.markdown(f"<div class='aq-card'><div class='aq-label'>☀️ O₃</div><div class='aq-value'>{o3:.1f} µg/m³</div></div>", unsafe_allow_html=True)
                     c7.markdown(f"<div class='aq-card'><div class='aq-label'>🌍 AQI</div><div class='aq-value'>{aqi:.0f}</div></div>", unsafe_allow_html=True)
 
-                    # 🧠 Verdict logic based on AQI
                     if aqi <= 20:
-                        verdict = "🩵 Air is *Excellent* — breathe freely!"
-                        color = "#00BFA5"
+                        verdict, color = "🩵 Air is *Excellent* — breathe freely!", "#00BFA5"
                     elif aqi <= 40:
-                        verdict = "💚 Air is *Good* — healthy and clear."
-                        color = "#4CAF50"
+                        verdict, color = "💚 Air is *Good* — healthy and clear.", "#4CAF50"
                     elif aqi <= 60:
-                        verdict = "💛 Air is *Moderate* — acceptable for most."
-                        color = "#FFC107"
+                        verdict, color = "💛 Air is *Moderate* — acceptable for most.", "#FFC107"
                     elif aqi <= 80:
-                        verdict = "🧡 Air is *Poor* — sensitive people take caution."
-                        color = "#FF9800"
+                        verdict, color = "🧡 Air is *Poor* — sensitive people take caution.", "#FF9800"
                     elif aqi <= 100:
-                        verdict = "❤️ Air is *Very Poor* — limit outdoor activity."
-                        color = "#F44336"
+                        verdict, color = "❤️ Air is *Very Poor* — limit outdoor activity.", "#F44336"
                     else:
-                        verdict = "☠️ Air is *Hazardous*! Stay indoors!"
-                        color = "#B71C1C"
+                        verdict, color = "☠️ Air is *Hazardous*! Stay indoors!", "#B71C1C"
 
                     st.markdown(
                         f"<div style='text-align:center;padding:18px;border-radius:15px;background:{color};color:white;font-weight:bold;font-size:1.2rem;margin-top:20px;'>{verdict}</div>",
                         unsafe_allow_html=True,
                     )
-                else:
-                    st.warning("⚠️ Could not fetch air quality data right now.")
-            except Exception as e:
-                st.error(f"Error fetching air quality: {e}")
+                except Exception as e:
+                    st.error(f"Error fetching air quality: {e}")
 
+        asyncio.run(main())
 
+# Optional Chart + Rain Prediction
 
+        if len(data) > 3:
+            st.subheader("📈 Temperature & Humidity (Last 24h)")
+            chart_cols = [c for c in ["temp", "rhum"] if c in data.columns]
+            if chart_cols:
+                df_plot = data.copy().reset_index()
+                df_plot = df_plot[df_plot["time"] >= datetime.utcnow() - timedelta(hours=24)]
+                st.line_chart(df_plot.set_index("time")[chart_cols])
 
-            # Optional chart
-            if len(data) > 3:
-                st.subheader("📈 Temperature & Humidity (Last 24h)")
-                chart_cols = [c for c in ["temp", "rhum"] if c in data.columns]
-                if chart_cols:
-                    df_plot = data.copy().reset_index()
-                    df_plot = df_plot[df_plot["time"] >= datetime.utcnow() - timedelta(hours=24)]
-                    st.line_chart(df_plot.set_index("time")[chart_cols])
+        feature_map = {"temp": "temparature", "pres": "pressure", "rhum": "humidity", "dwpt": "dewpoint", "wspd": "windspeed"}
+        for m_col, mdl_col in feature_map.items():
+            if m_col in latest.columns:
+                latest.rename(columns={m_col: mdl_col}, inplace=True)
 
-            # ---- Map Meteostat → Model Features ----
-            feature_map = {
-                "temp": "temparature",
-                "pres": "pressure",
-                "rhum": "humidity",
-                "dwpt": "dewpoint",
-                "wspd": "windspeed"
-            }
-            for m_col, mdl_col in feature_map.items():
-                if m_col in latest.columns:
-                    latest.rename(columns={m_col: mdl_col}, inplace=True)
+        model_features = getattr(pipeline, "feature_names_in_", None)
+        if model_features is None:
+            st.error("Your pipeline doesn’t expose feature names.")
+            st.stop()
 
-            model_features = getattr(pipeline, "feature_names_in_", None)
-            if model_features is None:
-                st.error("Your pipeline doesn’t expose feature names.")
-                st.stop()
+        for col in model_features:
+            if col not in latest.columns:
+                latest[col] = 0
 
-            for col in model_features:
-                if col not in latest.columns:
-                    latest[col] = 0
+        X_live = latest[model_features]
+        X_scaled = pipeline.transform(X_live)
+        prediction = model.predict(X_scaled)[0]
 
-            X_live = latest[model_features]
-            X_scaled = pipeline.transform(X_live)
-            prediction = model.predict(X_scaled)[0]
-
-            st.subheader("🌤️ Rainfall Prediction")
-            if int(prediction) == 1:
-                st.success("☔ **Rain likely at this location!**")
-            else:
-                st.info("🌞 **No rain expected right now.**")
+        st.subheader("🌤️ Rainfall Prediction")
+        if int(prediction) == 1:
+            st.success("☔ **Rain likely at this location!**")
+        else:
+            st.info("🌞 **No rain expected right now.**")
 
     except Exception as e:
         st.error(f"Error fetching data: {e}")
 
-else:
-    st.info("👆 Select a location using the map, city name, or coordinates to fetch live data.")
 
-# ===============================
+    else:
+        st.info("👆 Select a location using the map, city name, or coordinates to fetch live data.")
 
 # Footer
-
-# ===============================
 
 st.markdown("---")
 st.caption("Built by BCS2A • Powered by Meteostat, Streamlit & our trained model.")
