@@ -1,0 +1,20 @@
+The biological process is controlled by a number of factors, and defeciencies of any of these factors will affect the whole process.
+
+The law states that it is not only that the min amount of the material can be a limiting factor but also the excess amount of the same material can be limiting to the growth and development of the organism.
+
+Every organism has an ecological min and max for every factors and the range btw two limits is called is called limit or zone of tolerance.
+
+Every enviromental factor has two zones:
+Zone of tolerance and zone of intolerance
+
+Zone of tolerance: this zone favourable for the development and growth of the organism. It has three categories, optimum zone, critical min and max zone.
+
+A optimum zone is the most favourable zone for the growth and development;
+A critical min zone is the lowest min limit below which growth and development of an organism;
+A critical max zone is the highest max limit above which growth and development of an organism;
+
+tolerance wrt various factors differs from species to species. Organism that have a wide range of tolerance for all factors have a better chance of survial and are widely distribusted.
+
+*Graph of range of tolerance 
+
+It states that product of the wavelength 
