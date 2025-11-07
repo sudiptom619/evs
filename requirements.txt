@@ -11,3 +11,4 @@ catboost
 geopy
 streamlit-folium
 folium
+aiohttp
